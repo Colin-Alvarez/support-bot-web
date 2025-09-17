@@ -3,6 +3,8 @@
   const API_TICKET = "https://YOUR-SUPABASE-FUNCTIONS-URL/create-ticket";
   let sessionId = crypto.randomUUID();
   let chatTranscript = [];
+  let awaitingTicketConfirm = false; // when true, next user input is treated as yes/no for ticket creation
+  let lastActionRow = null; // store action row element for cleanup
 
   function el(tag, cls, html) { const e = document.createElement(tag); if (cls) e.className=cls; if (html) e.innerHTML=html; return e; }
 
@@ -58,7 +60,16 @@
   document.body.append(btn, panel);
 
   btn.onclick = () => { panel.style.display = panel.style.display === 'block' ? 'none' : 'block'; input.focus(); };
-  input.addEventListener('keydown', e => { if (e.key === 'Enter') send.click(); });
+  input.addEventListener('keydown', e => { 
+    if (e.key === 'Enter') {
+      const v = (input.value || '').trim();
+      if (awaitingTicketConfirm && v) {
+        handleTicketConfirmation(v);
+      } else {
+        send.click();
+      }
+    }
+  });
 
   // Show the ticket form
   function showTicketForm() {
@@ -102,7 +113,7 @@
     // Only show citations if there are valid URLs and it's not a social response
     if (cites?.length && who==='assistant') {
       // Filter out any invalid URLs
-      const validCites = cites.filter(url => url && url.startsWith('http'));
+      const validCites = cites.filter(url => url && /^https?:\/\//i.test(url));
       
       if (validCites.length > 0) {
         const c = el('div', 'sb-cite');
@@ -128,6 +139,39 @@
     m.innerHTML = text;
     body.append(m);
     body.scrollTop = body.scrollHeight;
+  }
+
+  function cleanupActionRow() {
+    if (lastActionRow && lastActionRow.parentNode) {
+      lastActionRow.remove();
+    }
+    lastActionRow = null;
+  }
+
+  function handleTicketConfirmation(inputText) {
+    const v = (inputText || '').trim().toLowerCase();
+    const positive = ['yes','y','yeah','yep','sure','please','ok','okay'];
+    const containsCreate = v.includes('create a ticket') || v.includes('start a ticket') || v.includes('open a ticket') || v.includes('ticket');
+    if (positive.includes(v) || containsCreate) {
+      addMsg(inputText, 'user');
+      input.value = '';
+      awaitingTicketConfirm = false;
+      cleanupActionRow();
+      addSystemMsg('Great! Let\'s get you connected with our technical team. Please provide a few details so they can best assist you.');
+      setTimeout(() => showTicketForm(), 300);
+      return;
+    }
+    if (v === 'no' || v === 'n' || v.startsWith('no ')) {
+      addMsg(inputText, 'user');
+      input.value = '';
+      awaitingTicketConfirm = false;
+      cleanupActionRow();
+      addSystemMsg('No problem! Feel free to ask me something else or try rephrasing your question.');
+      setTimeout(() => input.focus(), 200);
+      return;
+    }
+    // Otherwise treat as normal question
+    send.click();
   }
 
   // Create a ticket with the Freshdesk API
@@ -217,7 +261,7 @@
         res.citations.map(c => c.url).filter(url => url && /^https?:\/\//i.test(url)) : 
         [];
       
-      const answerText = res.answer && typeof res.answer === 'string' ? res.answer : "Let me connect you with our support team for this one. Would you like me to start a ticket?";
+      const answerText = res.answer && typeof res.answer === 'string' ? res.answer : "I’m not finding enough info to fully resolve this one.";
       addMsg(answerText, 'assistant', citeUrls);
       
       // If the bot couldn't answer, offer to create a ticket with a more conversational approach
@@ -230,41 +274,26 @@
           const continueBtn = el('button', 'sb-action-btn', 'Continue Chatting');
           
           const openTicketFlow = () => {
-            actionRow.remove();
+            cleanupActionRow();
             addSystemMsg('Great! Let\'s get you connected with our technical team. Please provide a few details so they can best assist you.');
-            setTimeout(() => {
-              showTicketForm();
-            }, 400);
+            setTimeout(() => { showTicketForm(); }, 300);
           };
 
           createTicketBtn.onclick = openTicketFlow;
           
           continueBtn.onclick = () => {
-            actionRow.remove();
+            cleanupActionRow();
             addSystemMsg('No problem! Feel free to ask me something else or try rephrasing your question.');
-            setTimeout(() => { input.focus(); }, 400);
+            setTimeout(() => { input.focus(); }, 300);
           };
           
           actionRow.append(createTicketBtn, continueBtn);
           body.append(actionRow);
           body.scrollTop = body.scrollHeight;
+          lastActionRow = actionRow;
 
-          // Listen for simple yes/no to auto-trigger the ticket flow
-          const yesNoHandler = (e) => {
-            if (e.key === 'Enter') {
-              const v = (input.value || '').trim().toLowerCase();
-              if (v === 'yes' || v === 'y' || v.includes('start a ticket') || v.includes('create a ticket')) {
-                addMsg(input.value, 'user');
-                input.value = '';
-                openTicketFlow();
-              } else if (v === 'no' || v === 'n') {
-                addMsg(input.value, 'user');
-                input.value = '';
-                continueBtn.onclick();
-              }
-            }
-          };
-          input.addEventListener('keydown', yesNoHandler, { once: true });
+          // Enable yes/no confirmation mode
+          awaitingTicketConfirm = true;
         }, 600);
       }
     } catch (err) {
