@@ -13,6 +13,7 @@ type Message = {
   role: "user" | "assistant";
   content: string;        // already HTML-safe & with <br/>/sup injected
   citations?: Citation[]; // optional per assistant message
+  timestamp?: string;     // ISO string
 };
 
 function escapeHtml(s: string) {
@@ -48,14 +49,16 @@ export default function SupportBotWidget({
       content: escapeHtml(
         "Hey! My name is TylerBot 5000. I'm your digital assistant here to help get your system back working! Ask me anything about Control4, your alarm, or anything else about your setup."
       ),
+      timestamp: new Date().toISOString(),
     },
   ]);
   const [input, setInput] = useState("");
+  const [sessionId, setSessionId] = useState<string>(() => crypto.randomUUID());
 
   async function send() {
     const q = input.trim();
     if (!q) return;
-    setMessages((m) => [...m, { role: "user", content: escapeHtml(q) }]);
+    setMessages((m) => [...m, { role: "user", content: escapeHtml(q), timestamp: new Date().toISOString() }]);
     setInput("");
     setLoading(true);
     try {
@@ -67,23 +70,38 @@ export default function SupportBotWidget({
           Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
           apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
         },
-        body: JSON.stringify({ query: q, top_k: 10 }),
+        body: JSON.stringify({ query: q, top_k: 10, session_id: sessionId }),
       });
 
-      let answer = "Sorry, I couldn’t find that.";
+      let answer = "I’m not finding enough info to fully resolve this one.";
       let citations: Citation[] | undefined = undefined;
+      let needsHumanHelp = false;
 
       // If backend returns a non-2xx, try to parse the error but still show a friendly message
       const json = await res.json().catch(() => ({}));
       if (json?.answer) answer = json.answer;
-      if (Array.isArray(json?.citations)) citations = json.citations;
+      if (Array.isArray(json?.citations)) citations = json.citations.filter((c: Citation) => c.url && /^https?:\/\//i.test(c.url));
+      if (typeof json?.needs_human_help === 'boolean') needsHumanHelp = json.needs_human_help;
+      if (typeof json?.session_id === 'string' && json.session_id) setSessionId(json.session_id);
 
       const rendered = renderAnswerHtml(answer);
 
       setMessages((m) => [
         ...m,
-        { role: "assistant", content: rendered, citations },
+        { role: "assistant", content: rendered, citations, timestamp: new Date().toISOString() },
       ]);
+
+      // If human help is needed, append a follow-up prompt (UI-level)
+      if (needsHumanHelp) {
+        setMessages((m) => [
+          ...m,
+          {
+            role: "assistant",
+            content: escapeHtml("Would you like me to create a support ticket so our team can assist you directly?"),
+            timestamp: new Date().toISOString(),
+          },
+        ]);
+      }
     } catch (_e) {
       setMessages((m) => [
         ...m,
@@ -92,6 +110,7 @@ export default function SupportBotWidget({
           content: escapeHtml(
             "Oops, something went wrong. If this keeps happening, it might be a backend error rather than 'no answer found.'"
           ),
+          timestamp: new Date().toISOString(),
         },
       ]);
     } finally {

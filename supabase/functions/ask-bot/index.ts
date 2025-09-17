@@ -53,9 +53,9 @@ type Citation = {
 };
 
 function safeUrl(r: KBRow): string {
-  // If your RPC returns a doc/article id and you need to synthesize a URL, do it here.
-  // Example (Freshdesk): return r.source_url ?? `https://your.freshdesk.com/support/solutions/articles/${r.id}`;
-  return r.source_url ?? "#";
+  // Only allow valid http(s) URLs; otherwise return empty string to prevent dead links
+  const url = r.source_url ?? "";
+  return (typeof url === "string" && /^https?:\/\//i.test(url)) ? url : "";
 }
 
 serve(async (req) => {
@@ -179,15 +179,15 @@ serve(async (req) => {
     const system =
       `You are TylerBot 5000, a friendly, helpful support assistant for a technology company that specializes in Control4 home automation systems. 
       
-Your primary goal is to provide accurate, helpful information based on the CONTEXT provided, but you should respond in a conversational, engaging manner.
+Your primary goal is to provide accurate, helpful information based on the CONTEXT provided, and respond in a conversational, engaging manner.
 
 Guidelines:
 - Be warm and personable in your tone
 - Use simple, clear language that non-technical users can understand
 - When appropriate, ask clarifying questions to better understand the user's issue
 - Acknowledge the user's frustration or confusion when they're having problems
-- Always cite your sources using [#n] notation when providing technical information
-- If you don't know a technical answer, be honest and offer to create a support ticket
+- Cite your sources using [#n] notation only when providing technical information drawn from CONTEXT
+- Do not say "I don't know". If you cannot fully answer a technical question with the given CONTEXT, provide a brief helpful suggestion and offer to connect the user with human support to continue.
 - Maintain a helpful, positive tone throughout the conversation
 
 IMPORTANT: For basic social interactions (greetings, how are you, thanks, etc.), respond naturally without requiring CONTEXT. For example:
@@ -278,14 +278,14 @@ Remember that you're speaking with end users who may not be technically savvy, s
     });
     const chatRes = await chatHttp.json();
 
-    const answer: string =
+    let answer: string =
       chatRes?.choices?.[0]?.message?.content ??
-      (hits.length ? "I'm not sure about that, but I'd be happy to help with any Control4 or home automation questions you might have!" : "I couldn't find specific information about that in our knowledge base. Is there something else about your Control4 system I can help with?");
+      (hits.length ? "I’ll do my best to help with your Control4 or home automation questions!" : "I couldn’t find specific information about that in our knowledge base.");
     
     // Check if the answer indicates the bot couldn't help with a technical question
     const noAnswerPatterns = [
       /I don't know/i,
-      /I couldn't find that/i,
+      /I couldn'?t find( that)?/i,
       /I'm not sure/i,
       /I don't have information/i,
       /not in our knowledge base/i,
@@ -296,11 +296,16 @@ Remember that you're speaking with end users who may not be technically savvy, s
     ];
     
     // Only suggest human help if it's a technical question the bot couldn't answer
-    const needsHumanHelp = !isSocialQuestion && 
+    let needsHumanHelp = !isSocialQuestion && 
       (noAnswerPatterns.some(pattern => pattern.test(answer)) || hits.length === 0);
 
+    // If we need human help, replace any unhelpful phrasing with a friendly offer
+    if (needsHumanHelp) {
+      answer = "I’m not finding enough info to fully resolve this one. I can connect you with our technical support team so they can take it from here. Would you like me to create a support ticket?";
+    }
+
     // 4) Build citations that match [#1..#n]
-    const citations: Citation[] = topForLLM.map((r, i) => ({
+    const citationsAll: Citation[] = topForLLM.map((r, i) => ({
       index: i + 1,
       title: r.source_title || "Knowledge Base Article",
       url: safeUrl(r),
@@ -308,6 +313,14 @@ Remember that you're speaking with end users who may not be technically savvy, s
       score: Number(r.score ?? 0),
       updated_at: r.updated_at ?? undefined,
     }));
+
+    // Include only citations that are actually referenced in the answer text
+    const referenced = new Set<number>();
+    for (const m of answer.matchAll(/\[#(\d+)\]/g)) {
+      const n = Number(m[1]);
+      if (Number.isFinite(n)) referenced.add(n);
+    }
+    const citations = citationsAll.filter(c => referenced.has(c.index) && c.url);
 
     // Store the conversation in the database if session_id is provided
     if (sessionId) {
