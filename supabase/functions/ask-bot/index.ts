@@ -177,7 +177,7 @@ serve(async (req) => {
       .join("\n\n");
 
     const system =
-      `You are a friendly, helpful support assistant for a technology company. 
+      `You are TylerBot 5000, a friendly, helpful support assistant for a technology company that specializes in Control4 home automation systems. 
       
 Your primary goal is to provide accurate, helpful information based on the CONTEXT provided, but you should respond in a conversational, engaging manner.
 
@@ -186,9 +186,17 @@ Guidelines:
 - Use simple, clear language that non-technical users can understand
 - When appropriate, ask clarifying questions to better understand the user's issue
 - Acknowledge the user's frustration or confusion when they're having problems
-- Always cite your sources using [#n] notation
-- If you don't know the answer, be honest and offer to create a support ticket
+- Always cite your sources using [#n] notation when providing technical information
+- If you don't know a technical answer, be honest and offer to create a support ticket
 - Maintain a helpful, positive tone throughout the conversation
+
+IMPORTANT: For basic social interactions (greetings, how are you, thanks, etc.), respond naturally without requiring CONTEXT. For example:
+- If asked "How are you?", respond positively like "I'm doing great, thanks for asking! How can I help you today?"
+- If greeted with "Hello" or "Hi", respond with a friendly greeting
+- If thanked, acknowledge with "You're welcome" or similar
+- If asked your name, remind them you are TylerBot 5000, a digital assistant
+
+For all technical questions about Control4, alarms, remotes, or system setup, use ONLY information from the provided CONTEXT and cite your sources.
 
 Remember that you're speaking with end users who may not be technically savvy, so avoid jargon unless it's in the CONTEXT.`;
     // Fetch conversation history if session ID is provided
@@ -251,9 +259,9 @@ Remember that you're speaking with end users who may not be technically savvy, s
 
     const answer: string =
       chatRes?.choices?.[0]?.message?.content ??
-      (hits.length ? "I don't know." : "I couldn't find that in our knowledge base.");
+      (hits.length ? "I'm not sure about that, but I'd be happy to help with any Control4 or home automation questions you might have!" : "I couldn't find specific information about that in our knowledge base. Is there something else about your Control4 system I can help with?");
     
-    // Check if the answer indicates the bot couldn't help
+    // Check if the answer indicates the bot couldn't help with a technical question
     const noAnswerPatterns = [
       /I don't know/i,
       /I couldn't find that/i,
@@ -266,7 +274,28 @@ Remember that you're speaking with end users who may not be technically savvy, s
       /I'm unable to/i
     ];
     
-    const needsHumanHelp = noAnswerPatterns.some(pattern => pattern.test(answer)) || hits.length === 0;
+    // Detect if this was a social/greeting question or a technical question
+    const socialPatterns = [
+      /how are you/i,
+      /hello/i,
+      /hi there/i,
+      /good morning/i,
+      /good afternoon/i,
+      /good evening/i,
+      /hey/i,
+      /thanks/i,
+      /thank you/i,
+      /your name/i,
+      /who are you/i,
+      /what are you/i,
+      /how is your day/i
+    ];
+    
+    const isSocialQuestion = socialPatterns.some(pattern => pattern.test(query));
+    
+    // Only suggest human help if it's a technical question the bot couldn't answer
+    const needsHumanHelp = !isSocialQuestion && 
+      (noAnswerPatterns.some(pattern => pattern.test(answer)) || hits.length === 0);
 
     // 4) Build citations that match [#1..#n]
     const citations: Citation[] = topForLLM.map((r, i) => ({

@@ -8,7 +8,7 @@
 
   const btn = el('button', 'sb-launch', 'Need help?');
   const panel = el('div', 'sb-panel');
-  const header = el('div', 'sb-header', 'Support Assistant');
+  const header = el('div', 'sb-header', 'TylerBot 5000');
   const body = el('div', 'sb-body');
   const inputWrap = el('div', 'sb-input');
   const input = el('input'); input.placeholder = "Ask a question… e.g., 'Remote won't connect'";
@@ -175,7 +175,7 @@
   }
 
   // Initialize with a more conversational welcome message
-  addMsg("👋 Hi there! I'm your friendly support assistant. I can help with setup, remotes, network issues, and scenes. How can I assist you today?");
+  addMsg("👋 Hey! My name is TylerBot 5000. I'm your digital assistant here to help get your system back working! Ask me anything about Control4, your alarm, or anything else about your setup.");
 
   // Ask the bot a question
   async function ask(q) {
@@ -246,7 +246,7 @@
     } catch (err) {
       thinking.remove();
       console.error('Chat error:', err);
-      addMsg("Sorry, I hit a snag. Please try again.", 'assistant');
+      addMsg("Oops! Looks like I'm having a bit of a technical hiccup. Could you please try asking your question again? I'm here to help!", 'assistant');
     }
   }
 
