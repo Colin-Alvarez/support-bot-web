@@ -174,15 +174,25 @@
     }
   }
 
-  // Initialize with welcome message
-  addMsg("I can help with setup, remotes, network, and scenes. Ask me anything.");
+  // Initialize with a more conversational welcome message
+  addMsg("👋 Hi there! I'm your friendly support assistant. I can help with setup, remotes, network issues, and scenes. How can I assist you today?");
 
   // Ask the bot a question
   async function ask(q) {
     addMsg(q, 'user');
     input.value = '';
-    addMsg('…thinking…');
-    const thinking = body.lastChild;
+    
+    // Show a more natural "typing" indicator
+    const typingIndicator = el('div', 'sb-typing-indicator');
+    for (let i = 0; i < 3; i++) {
+      const dot = el('span', 'sb-typing-dot');
+      typingIndicator.appendChild(dot);
+    }
+    body.appendChild(typingIndicator);
+    body.scrollTop = body.scrollHeight;
+    
+    // Store reference to the typing indicator
+    const thinking = typingIndicator;
 
     try {
       const res = await fetch(API_ASK, {
@@ -203,23 +213,29 @@
       
       addMsg(res.answer || "Sorry, I couldn't find that.", 'assistant', citeUrls);
       
-      // If the bot couldn't answer, offer to create a ticket
+      // If the bot couldn't answer, offer to create a ticket with a more conversational approach
       if (res.needs_human_help) {
         setTimeout(() => {
-          addSystemMsg('I don\'t have enough information to answer your question. Would you like to create a support ticket to get help from our technical team?');
+          addSystemMsg('I\'m sorry, but I don\'t seem to have enough information to fully answer your question. Would you like me to connect you with our technical support team? They can provide more personalized assistance for your specific situation.');
           
           const actionRow = el('div', 'sb-action-row');
-          const createTicketBtn = el('button', 'sb-action-btn', 'Create Ticket');
+          const createTicketBtn = el('button', 'sb-action-btn', 'Get Expert Help');
           const continueBtn = el('button', 'sb-action-btn', 'Continue Chatting');
           
           createTicketBtn.onclick = () => {
             actionRow.remove();
-            showTicketForm();
+            addSystemMsg('Great! Let\'s get you connected with our technical team. Please provide a few details so they can best assist you.');
+            setTimeout(() => {
+              showTicketForm();
+            }, 500);
           };
           
           continueBtn.onclick = () => {
             actionRow.remove();
-            input.focus();
+            addSystemMsg('No problem! Feel free to ask me something else or try rephrasing your question.');
+            setTimeout(() => {
+              input.focus();
+            }, 500);
           };
           
           actionRow.append(createTicketBtn, continueBtn);

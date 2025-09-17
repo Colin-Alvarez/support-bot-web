@@ -235,3 +235,50 @@
 .sb-cancel-ticket:hover {
   background: #e9ecef;
 }
+
+/* Typing indicator */
+.sb-typing-indicator {
+  display: flex;
+  align-items: center;
+  margin-bottom: 15px;
+  padding: 12px 15px;
+  border-radius: 8px;
+  background: white;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  width: fit-content;
+}
+
+.sb-typing-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 4px;
+  background-color: #4a6cf7;
+  border-radius: 50%;
+  opacity: 0.6;
+  animation: typing-dot 1.4s infinite ease-in-out both;
+}
+
+.sb-typing-dot:nth-child(1) {
+  animation-delay: 0s;
+}
+
+.sb-typing-dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.sb-typing-dot:nth-child(3) {
+  animation-delay: 0.4s;
+  margin-right: 0;
+}
+
+@keyframes typing-dot {
+  0%, 80%, 100% { 
+    transform: scale(0.7);
+    opacity: 0.6;
+  }
+  40% { 
+    transform: scale(1);
+    opacity: 1;
+  }
+}

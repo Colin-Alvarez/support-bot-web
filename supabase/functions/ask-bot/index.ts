@@ -84,6 +84,7 @@ serve(async (req) => {
     const w_lexical = Number.isFinite(body?.w_lexical) ? body.w_lexical : 0.35;
     const w_trigram = Number.isFinite(body?.w_trigram) ? body.w_trigram : 0.1;
     const sessionId: string = body?.session_id || crypto.randomUUID();
+    const maxHistoryMessages = Number(body?.max_history ?? 4); // Number of previous messages to include
 
     if (!query || typeof query !== "string") {
       return new Response(JSON.stringify({ error: "Missing 'query' (string)" }), {
@@ -176,8 +177,62 @@ serve(async (req) => {
       .join("\n\n");
 
     const system =
-      `You are a concise support assistant. Answer using only CONTEXT. If unsure, say you don't know. Always cite like [#n].`;
-    const prompt = `USER QUESTION:\n${query}\n\nCONTEXT:\n${context}`;
+      `You are a friendly, helpful support assistant for a technology company. 
+      
+Your primary goal is to provide accurate, helpful information based on the CONTEXT provided, but you should respond in a conversational, engaging manner.
+
+Guidelines:
+- Be warm and personable in your tone
+- Use simple, clear language that non-technical users can understand
+- When appropriate, ask clarifying questions to better understand the user's issue
+- Acknowledge the user's frustration or confusion when they're having problems
+- Always cite your sources using [#n] notation
+- If you don't know the answer, be honest and offer to create a support ticket
+- Maintain a helpful, positive tone throughout the conversation
+
+Remember that you're speaking with end users who may not be technically savvy, so avoid jargon unless it's in the CONTEXT.`;
+    // Fetch conversation history if session ID is provided
+    let conversationHistory = [];
+    if (sessionId && maxHistoryMessages > 0) {
+      try {
+        const { data: historyData, error: historyError } = await supabase
+          .from('chat_messages')
+          .select('role, content')
+          .eq('session_id', sessionId)
+          .order('timestamp', { ascending: true })
+          .limit(maxHistoryMessages * 2); // Fetch pairs of messages (user + assistant)
+        
+        if (!historyError && historyData && historyData.length > 0) {
+          conversationHistory = historyData.map(msg => ({
+            role: msg.role,
+            content: msg.content
+          }));
+        }
+      } catch (historyErr) {
+        console.error("Failed to fetch conversation history:", historyErr);
+        // Continue even if history fetch fails
+      }
+    }
+
+    // Prepare the context message
+    const contextMessage = `CONTEXT:\n${context}`;
+    
+    // Build messages array with history
+    const messages = [
+      { role: "system", content: system }
+    ];
+    
+    // Add conversation history if available
+    if (conversationHistory.length > 0) {
+      // Add the most recent messages, but limit to maxHistoryMessages
+      const recentHistory = conversationHistory.slice(-maxHistoryMessages * 2);
+      messages.push(...recentHistory);
+    }
+    
+    // Add the current context and query
+    messages.push(
+      { role: "user", content: `${query}\n\n${contextMessage}` }
+    );
 
     // 3) Chat completion
     const chatHttp = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -188,11 +243,8 @@ serve(async (req) => {
       },
       body: JSON.stringify({
         model: OPENAI_MODEL,
-        temperature: 0.2,
-        messages: [
-          { role: "system", content: system },
-          { role: "user", content: prompt },
-        ],
+        temperature: 0.7, // Slightly higher temperature for more conversational responses
+        messages: messages,
       }),
     });
     const chatRes = await chatHttp.json();
