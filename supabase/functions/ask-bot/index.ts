@@ -222,8 +222,25 @@ Remember that you're speaking with end users who may not be technically savvy, s
       }
     }
 
-    // Prepare the context message
-    const contextMessage = `CONTEXT:\n${context}`;
+    // Detect if this is a social/greeting question or a technical question
+    const socialPatterns = [
+      /how are you/i,
+      /hello/i,
+      /hi there/i,
+      /good morning/i,
+      /good afternoon/i,
+      /good evening/i,
+      /hey/i,
+      /thanks/i,
+      /thank you/i,
+      /your name/i,
+      /who are you/i,
+      /what are you/i,
+      /how is your day/i,
+      /nice to meet you/i
+    ];
+    
+    const isSocialQuestion = socialPatterns.some(pattern => pattern.test(query));
     
     // Build messages array with history
     const messages = [
@@ -237,10 +254,14 @@ Remember that you're speaking with end users who may not be technically savvy, s
       messages.push(...recentHistory);
     }
     
-    // Add the current context and query
-    messages.push(
-      { role: "user", content: `${query}\n\n${contextMessage}` }
-    );
+    // For social questions, don't include the context to allow natural responses
+    if (isSocialQuestion) {
+      messages.push({ role: "user", content: query });
+    } else {
+      // For technical questions, include the context
+      const contextMessage = `CONTEXT:\n${context}`;
+      messages.push({ role: "user", content: `${query}\n\n${contextMessage}` });
+    }
 
     // 3) Chat completion
     const chatHttp = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -273,25 +294,6 @@ Remember that you're speaking with end users who may not be technically savvy, s
       /I can't provide/i,
       /I'm unable to/i
     ];
-    
-    // Detect if this was a social/greeting question or a technical question
-    const socialPatterns = [
-      /how are you/i,
-      /hello/i,
-      /hi there/i,
-      /good morning/i,
-      /good afternoon/i,
-      /good evening/i,
-      /hey/i,
-      /thanks/i,
-      /thank you/i,
-      /your name/i,
-      /who are you/i,
-      /what are you/i,
-      /how is your day/i
-    ];
-    
-    const isSocialQuestion = socialPatterns.some(pattern => pattern.test(query));
     
     // Only suggest human help if it's a technical question the bot couldn't answer
     const needsHumanHelp = !isSocialQuestion && 
@@ -333,8 +335,10 @@ Remember that you're speaking with end users who may not be technically savvy, s
     // Add a flag to indicate if human help might be needed
     return new Response(JSON.stringify({ 
       answer, 
-      citations, 
-      sources: hits,
+      // Only include citations for technical questions and when there are actual relevant hits
+      citations: isSocialQuestion ? [] : (hits.length > 0 && !needsHumanHelp ? citations : []), 
+      // Only include sources when they're actually relevant
+      sources: isSocialQuestion ? [] : (hits.length > 0 && !needsHumanHelp ? hits : []),
       needs_human_help: needsHumanHelp,
       session_id: sessionId
     }), {

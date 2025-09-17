@@ -99,10 +99,16 @@
     const formattedText = who==='user' ? `<b>You:</b> ${text}` : `<b>Bot:</b> ${text}`;
     m.innerHTML = formattedText;
     
+    // Only show citations if there are valid URLs and it's not a social response
     if (cites?.length && who==='assistant') {
-      const c = el('div', 'sb-cite');
-      c.innerHTML = `Sources: ` + cites.map(u => `<a href="${u}" target="_blank" rel="noopener">${u}</a>`).join(' · ');
-      m.append(c);
+      // Filter out any invalid URLs
+      const validCites = cites.filter(url => url && url.startsWith('http'));
+      
+      if (validCites.length > 0) {
+        const c = el('div', 'sb-cite');
+        c.innerHTML = `Sources: ` + validCites.map(u => `<a href="${u}" target="_blank" rel="noopener">${u}</a>`).join(' · ');
+        m.append(c);
+      }
     }
     
     body.append(m);
@@ -206,8 +212,8 @@
 
       thinking.remove();
       
-      // Get citation URLs
-      const citeUrls = res.citations ? 
+      // Get citation URLs (only if there are valid citations)
+      const citeUrls = res.citations && res.citations.length > 0 ? 
         res.citations.map(c => c.url).filter(url => url && url !== '#') : 
         [];
       
