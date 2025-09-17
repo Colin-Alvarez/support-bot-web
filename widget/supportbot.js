@@ -214,40 +214,58 @@
       
       // Get citation URLs (only if there are valid citations)
       const citeUrls = res.citations && res.citations.length > 0 ? 
-        res.citations.map(c => c.url).filter(url => url && url !== '#') : 
+        res.citations.map(c => c.url).filter(url => url && /^https?:\/\//i.test(url)) : 
         [];
       
-      addMsg(res.answer || "Sorry, I couldn't find that.", 'assistant', citeUrls);
+      const answerText = res.answer && typeof res.answer === 'string' ? res.answer : "Let me connect you with our support team for this one. Would you like me to start a ticket?";
+      addMsg(answerText, 'assistant', citeUrls);
       
       // If the bot couldn't answer, offer to create a ticket with a more conversational approach
       if (res.needs_human_help) {
         setTimeout(() => {
-          addSystemMsg('I\'m sorry, but I don\'t seem to have enough information to fully answer your question. Would you like me to connect you with our technical support team? They can provide more personalized assistance for your specific situation.');
+          addSystemMsg('I\'m not finding enough info to fully resolve this one. Would you like me to connect you with our technical support team to create a support ticket?');
           
           const actionRow = el('div', 'sb-action-row');
           const createTicketBtn = el('button', 'sb-action-btn', 'Get Expert Help');
           const continueBtn = el('button', 'sb-action-btn', 'Continue Chatting');
           
-          createTicketBtn.onclick = () => {
+          const openTicketFlow = () => {
             actionRow.remove();
             addSystemMsg('Great! Let\'s get you connected with our technical team. Please provide a few details so they can best assist you.');
             setTimeout(() => {
               showTicketForm();
-            }, 500);
+            }, 400);
           };
+
+          createTicketBtn.onclick = openTicketFlow;
           
           continueBtn.onclick = () => {
             actionRow.remove();
             addSystemMsg('No problem! Feel free to ask me something else or try rephrasing your question.');
-            setTimeout(() => {
-              input.focus();
-            }, 500);
+            setTimeout(() => { input.focus(); }, 400);
           };
           
           actionRow.append(createTicketBtn, continueBtn);
           body.append(actionRow);
           body.scrollTop = body.scrollHeight;
-        }, 1000);
+
+          // Listen for simple yes/no to auto-trigger the ticket flow
+          const yesNoHandler = (e) => {
+            if (e.key === 'Enter') {
+              const v = (input.value || '').trim().toLowerCase();
+              if (v === 'yes' || v === 'y' || v.includes('start a ticket') || v.includes('create a ticket')) {
+                addMsg(input.value, 'user');
+                input.value = '';
+                openTicketFlow();
+              } else if (v === 'no' || v === 'n') {
+                addMsg(input.value, 'user');
+                input.value = '';
+                continueBtn.onclick();
+              }
+            }
+          };
+          input.addEventListener('keydown', yesNoHandler, { once: true });
+        }, 600);
       }
     } catch (err) {
       thinking.remove();

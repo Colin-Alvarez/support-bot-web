@@ -304,6 +304,11 @@ Remember that you're speaking with end users who may not be technically savvy, s
       answer = "I’m not finding enough info to fully resolve this one. I can connect you with our technical support team so they can take it from here. Would you like me to create a support ticket?";
     }
 
+    // Ensure social questions never respond with "I don't know"-style phrases
+    if (isSocialQuestion && (!answer || noAnswerPatterns.some(pattern => pattern.test(answer)))) {
+      answer = "I'm doing great, thanks for asking! How can I help you today?";
+    }
+
     // 4) Build citations that match [#1..#n]
     const citationsAll: Citation[] = topForLLM.map((r, i) => ({
       index: i + 1,
