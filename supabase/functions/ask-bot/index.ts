@@ -83,6 +83,7 @@ serve(async (req) => {
     const w_semantic = Number.isFinite(body?.w_semantic) ? body.w_semantic : 0.55;
     const w_lexical = Number.isFinite(body?.w_lexical) ? body.w_lexical : 0.35;
     const w_trigram = Number.isFinite(body?.w_trigram) ? body.w_trigram : 0.1;
+    const sessionId: string = body?.session_id || crypto.randomUUID();
 
     if (!query || typeof query !== "string") {
       return new Response(JSON.stringify({ error: "Missing 'query' (string)" }), {
@@ -198,7 +199,22 @@ serve(async (req) => {
 
     const answer: string =
       chatRes?.choices?.[0]?.message?.content ??
-      (hits.length ? "I don't know." : "I couldn’t find that in our knowledge base.");
+      (hits.length ? "I don't know." : "I couldn't find that in our knowledge base.");
+    
+    // Check if the answer indicates the bot couldn't help
+    const noAnswerPatterns = [
+      /I don't know/i,
+      /I couldn't find that/i,
+      /I'm not sure/i,
+      /I don't have information/i,
+      /not in our knowledge base/i,
+      /I don't have enough information/i,
+      /I can't answer/i,
+      /I can't provide/i,
+      /I'm unable to/i
+    ];
+    
+    const needsHumanHelp = noAnswerPatterns.some(pattern => pattern.test(answer)) || hits.length === 0;
 
     // 4) Build citations that match [#1..#n]
     const citations: Citation[] = topForLLM.map((r, i) => ({
@@ -210,8 +226,37 @@ serve(async (req) => {
       updated_at: r.updated_at ?? undefined,
     }));
 
+    // Store the conversation in the database if session_id is provided
+    if (sessionId) {
+      try {
+        await supabase.from('chat_messages').insert({
+          session_id: sessionId,
+          role: 'user',
+          content: query,
+          timestamp: new Date().toISOString()
+        });
+        
+        await supabase.from('chat_messages').insert({
+          session_id: sessionId,
+          role: 'assistant',
+          content: answer,
+          timestamp: new Date().toISOString()
+        });
+      } catch (dbError) {
+        console.error("Failed to store chat message:", dbError);
+        // Continue even if storage fails
+      }
+    }
+
     // Keep "sources" for backward-compat with your current frontend, but add "citations" for the new UI.
-    return new Response(JSON.stringify({ answer, citations, sources: hits }), {
+    // Add a flag to indicate if human help might be needed
+    return new Response(JSON.stringify({ 
+      answer, 
+      citations, 
+      sources: hits,
+      needs_human_help: needsHumanHelp,
+      session_id: sessionId
+    }), {
       status: 200,
       headers: baseHeaders,
     });
