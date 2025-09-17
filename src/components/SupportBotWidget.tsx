@@ -36,9 +36,11 @@ function renderAnswerHtml(raw: string) {
 
 export default function SupportBotWidget({
   functionUrl = import.meta.env.VITE_FUNCTION_URL,
+  ticketFunctionUrl = import.meta.env.VITE_TICKET_FUNCTION_URL,
   title = "Need help? Ask our Support Bot",
 }: {
   functionUrl?: string;
+  ticketFunctionUrl?: string;
   title?: string;
 }) {
   const [open, setOpen] = useState(false);
@@ -54,10 +56,42 @@ export default function SupportBotWidget({
   ]);
   const [input, setInput] = useState("");
   const [sessionId, setSessionId] = useState<string>(() => crypto.randomUUID());
+  const [awaitingTicketConfirm, setAwaitingTicketConfirm] = useState(false);
+  const [showTicketForm, setShowTicketForm] = useState(false);
+  const [ticketName, setTicketName] = useState("");
+  const [ticketEmail, setTicketEmail] = useState("");
+  const [ticketSubject, setTicketSubject] = useState("");
+  const [ticketDescription, setTicketDescription] = useState("");
+  const [ticketSubmitting, setTicketSubmitting] = useState(false);
 
   async function send() {
     const q = input.trim();
     if (!q) return;
+
+    // If awaiting ticket confirmation, interpret yes/no quickly
+    if (awaitingTicketConfirm) {
+      const v = q.toLowerCase();
+      const positive = ["yes","y","yeah","yep","sure","please","ok","okay"]; 
+      const containsCreate = v.includes("create a ticket") || v.includes("start a ticket") || v.includes("open a ticket") || v.includes("ticket");
+      setMessages((m) => [...m, { role: "user", content: escapeHtml(q), timestamp: new Date().toISOString() }]);
+      setInput("");
+      if (positive.includes(v) || containsCreate) {
+        setAwaitingTicketConfirm(false);
+        // Pre-fill subject with the last user question if available
+        const lastUser = [...messages].reverse().find(m => m.role === 'user');
+        setTicketSubject(lastUser ? lastUser.content.replace(/<[^>]+>/g, '').slice(0, 60) : "Support request");
+        setShowTicketForm(true);
+        return;
+      }
+      if (v === 'no' || v === 'n' || v.startsWith('no ')) {
+        setAwaitingTicketConfirm(false);
+        setMessages((m) => [...m, { role: "assistant", content: escapeHtml("No problem! Feel free to ask me something else or try rephrasing your question."), timestamp: new Date().toISOString() }]);
+        setInput("");
+        return;
+      }
+      // fall through to normal flow if not recognized
+    }
+
     setMessages((m) => [...m, { role: "user", content: escapeHtml(q), timestamp: new Date().toISOString() }]);
     setInput("");
     setLoading(true);
@@ -66,7 +100,6 @@ export default function SupportBotWidget({
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          // anon key is safe to expose for calling Edge Functions
           Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
           apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
         },
@@ -77,7 +110,6 @@ export default function SupportBotWidget({
       let citations: Citation[] | undefined = undefined;
       let needsHumanHelp = false;
 
-      // If backend returns a non-2xx, try to parse the error but still show a friendly message
       const json = await res.json().catch(() => ({}));
       if (json?.answer) answer = json.answer;
       if (Array.isArray(json?.citations)) citations = json.citations.filter((c: Citation) => c.url && /^https?:\/\//i.test(c.url));
@@ -91,8 +123,8 @@ export default function SupportBotWidget({
         { role: "assistant", content: rendered, citations, timestamp: new Date().toISOString() },
       ]);
 
-      // If human help is needed, append a follow-up prompt (UI-level)
       if (needsHumanHelp) {
+        setAwaitingTicketConfirm(true);
         setMessages((m) => [
           ...m,
           {
@@ -268,45 +300,133 @@ export default function SupportBotWidget({
             )}
           </div>
 
-          <div
-            style={{
-              padding: 12,
-              borderTop: "1px solid #27272a",
-              display: "flex",
-              gap: 8,
-            }}
-          >
-            <input
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && send()}
-              placeholder="Type your question…"
+          {/* Ticket form */}
+          {showTicketForm ? (
+            <div style={{ padding: 12, borderTop: "1px solid #27272a", display: "grid", gap: 8 }}>
+              <div style={{ fontWeight: 600 }}>Create Support Ticket</div>
+              <input
+                placeholder="Your name"
+                value={ticketName}
+                onChange={(e) => setTicketName(e.target.value)}
+                style={{ borderRadius: 8, background: "#0f0f11", border: "1px solid #27272a", color: "#e5e5e5", padding: "8px 10px" }}
+              />
+              <input
+                placeholder="Email"
+                value={ticketEmail}
+                onChange={(e) => setTicketEmail(e.target.value)}
+                style={{ borderRadius: 8, background: "#0f0f11", border: "1px solid #27272a", color: "#e5e5e5", padding: "8px 10px" }}
+              />
+              <input
+                placeholder="Subject"
+                value={ticketSubject}
+                onChange={(e) => setTicketSubject(e.target.value)}
+                style={{ borderRadius: 8, background: "#0f0f11", border: "1px solid #27272a", color: "#e5e5e5", padding: "8px 10px" }}
+              />
+              <textarea
+                placeholder="Additional details (optional)"
+                value={ticketDescription}
+                onChange={(e) => setTicketDescription(e.target.value)}
+                rows={3}
+                style={{ borderRadius: 8, background: "#0f0f11", border: "1px solid #27272a", color: "#e5e5e5", padding: "8px 10px" }}
+              />
+              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                <button
+                  onClick={async () => {
+                    // basic validation
+                    if (!ticketName.trim() || !ticketEmail.trim() || !ticketSubject.trim()) {
+                      setMessages((m) => [...m, { role: "assistant", content: escapeHtml("Please fill in your name, email, and a subject."), timestamp: new Date().toISOString() }]);
+                      return;
+                    }
+                    const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+                    if (!emailRe.test(ticketEmail.trim())) {
+                      setMessages((m) => [...m, { role: "assistant", content: escapeHtml("Please enter a valid email address."), timestamp: new Date().toISOString() }]);
+                      return;
+                    }
+
+                    setTicketSubmitting(true);
+                    try {
+                      const transcript = messages.map(m => ({ role: m.role, content: m.content.replace(/<[^>]+>/g, ''), timestamp: m.timestamp || new Date().toISOString() }));
+                      const res = await fetch(ticketFunctionUrl!, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          name: ticketName.trim(),
+                          email: ticketEmail.trim(),
+                          subject: ticketSubject.trim(),
+                          description: ticketDescription.trim(),
+                          transcript,
+                          session_id: sessionId,
+                        }),
+                      });
+                      const json = await res.json().catch(() => ({}));
+                      if (res.ok && json?.success) {
+                        setMessages((m) => [...m, { role: "assistant", content: escapeHtml(`Success! Your ticket #${json.ticket_id} has been created. Our team will contact you soon.`), timestamp: new Date().toISOString() }]);
+                        setShowTicketForm(false);
+                        setTicketName(""); setTicketEmail(""); setTicketSubject(""); setTicketDescription("");
+                      } else {
+                        setMessages((m) => [...m, { role: "assistant", content: escapeHtml(json?.error || "Failed to create ticket. Please try again."), timestamp: new Date().toISOString() }]);
+                      }
+                    } catch {
+                      setMessages((m) => [...m, { role: "assistant", content: escapeHtml("Failed to create ticket. Please try again later."), timestamp: new Date().toISOString() }]);
+                    } finally {
+                      setTicketSubmitting(false);
+                    }
+                  }}
+                  disabled={ticketSubmitting}
+                  style={{ borderRadius: 8, background: "#4f46e5", color: "white", border: "none", padding: "8px 14px", opacity: ticketSubmitting ? 0.6 : 1 }}
+                >
+                  Submit Ticket
+                </button>
+                <button
+                  onClick={() => setShowTicketForm(false)}
+                  disabled={ticketSubmitting}
+                  style={{ borderRadius: 8, background: "#3f3f46", color: "white", border: "none", padding: "8px 14px" }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div
               style={{
-                flex: 1,
-                borderRadius: 8,
-                background: "#0f0f11",
-                border: "1px solid #27272a",
-                color: "#e5e5e5",
-                padding: "8px 10px",
-                outline: "none",
-              }}
-            />
-            <button
-              onClick={send}
-              disabled={loading}
-              style={{
-                borderRadius: 8,
-                background: "#4f46e5",
-                color: "white",
-                border: "none",
-                padding: "8px 14px",
-                opacity: loading ? 0.6 : 1,
-                cursor: loading ? "default" : "pointer",
+                padding: 12,
+                borderTop: "1px solid #27272a",
+                display: "flex",
+                gap: 8,
               }}
             >
-              Send
-            </button>
-          </div>
+              <input
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && send()}
+                placeholder={awaitingTicketConfirm ? "Type yes to create a ticket, or no to continue" : "Type your question…"}
+                style={{
+                  flex: 1,
+                  borderRadius: 8,
+                  background: "#0f0f11",
+                  border: "1px solid #27272a",
+                  color: "#e5e5e5",
+                  padding: "8px 10px",
+                  outline: "none",
+                }}
+              />
+              <button
+                onClick={send}
+                disabled={loading}
+                style={{
+                  borderRadius: 8,
+                  background: "#4f46e5",
+                  color: "white",
+                  border: "none",
+                  padding: "8px 14px",
+                  opacity: loading ? 0.6 : 1,
+                  cursor: loading ? "default" : "pointer",
+                }}
+              >
+                {awaitingTicketConfirm ? "Confirm" : "Send"}
+              </button>
+            </div>
+          )}
         </div>
       )}
     </>
