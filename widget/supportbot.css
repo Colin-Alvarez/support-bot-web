@@ -1,0 +1,9 @@
+.sb-launch { position: fixed; right: 20px; bottom: 20px; padding: 12px 16px; border-radius: 999px; box-shadow: 0 6px 20px rgba(0,0,0,.2); cursor: pointer; }
+.sb-panel { position: fixed; right: 20px; bottom: 80px; width: 360px; max-height: 70vh; display: none; background: #111; color: #eee; border-radius: 16px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,.35); }
+.sb-header { padding: 12px 16px; font-weight: 700; border-bottom: 1px solid #222; }
+.sb-body { padding: 12px 16px; overflow-y: auto; max-height: 52vh; }
+.sb-msg { margin: 8px 0; line-height: 1.35; }
+.sb-input { display:flex; gap:8px; padding: 12px; border-top:1px solid #222; }
+.sb-input input { flex:1; padding:10px; border-radius:10px; border:1px solid #333; background:#0b0b0b; color:#eee; }
+.sb-input button { padding:10px 12px; border-radius:10px; border:0; background:#6b46c1; color:white; }
+.sb-cite a { color:#9ae6b4; font-size: 12px; text-decoration: underline; }
