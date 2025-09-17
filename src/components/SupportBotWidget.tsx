@@ -1,6 +1,37 @@
 import React, { useState } from "react";
 
-type Message = { role: "user" | "assistant"; content: string };
+type Citation = {
+  index: number;          // 1-based, matches [#n] in the answer text
+  title: string;
+  url: string;
+  snippet: string;
+  score: number;
+  updated_at?: string | null;
+};
+
+type Message = {
+  role: "user" | "assistant";
+  content: string;        // already HTML-safe & with <br/>/sup injected
+  citations?: Citation[]; // optional per assistant message
+};
+
+function escapeHtml(s: string) {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function renderAnswerHtml(raw: string) {
+  // 1) Escape any HTML the model might have produced (safety)
+  const safe = escapeHtml(raw);
+  // 2) Convert [#n] to a small, readable superscript marker
+  const withSup = safe.replace(/\[#(\d+)\]/g, (_m, n) => `<sup>[${n}]</sup>`);
+  // 3) Convert newlines to <br/>
+  return withSup.replace(/\n/g, "<br/>");
+}
 
 export default function SupportBotWidget({
   functionUrl = import.meta.env.VITE_FUNCTION_URL,
@@ -14,8 +45,9 @@ export default function SupportBotWidget({
   const [messages, setMessages] = useState<Message[]>([
     {
       role: "assistant",
-      content:
-        "Hey! My name is TylerBot 5000. I'm your digital assistant here to help get your system back working!Ask me anything about Control4, your alarm, or anything else about your setup.",
+      content: escapeHtml(
+        "Hey! My name is TylerBot 5000. I'm your digital assistant here to help get your system back working! Ask me anything about Control4, your alarm, or anything else about your setup."
+      ),
     },
   ]);
   const [input, setInput] = useState("");
@@ -23,7 +55,7 @@ export default function SupportBotWidget({
   async function send() {
     const q = input.trim();
     if (!q) return;
-    setMessages((m) => [...m, { role: "user", content: q }]);
+    setMessages((m) => [...m, { role: "user", content: escapeHtml(q) }]);
     setInput("");
     setLoading(true);
     try {
@@ -32,22 +64,35 @@ export default function SupportBotWidget({
         headers: {
           "Content-Type": "application/json",
           // anon key is safe to expose for calling Edge Functions
-          "Authorization": `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-          "apikey": import.meta.env.VITE_SUPABASE_ANON_KEY
+          Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+          apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
         },
-        body: JSON.stringify({ query: q, top_k: 10 })
+        body: JSON.stringify({ query: q, top_k: 10 }),
       });
-      const json = await res.json();
-      const answer: string = json.answer ?? "Sorry, I couldn’t find that.";
 
-      // render [#n] citations as superscripts
-      const rendered = answer.replace(/\[#(\d+)\]/g, "<sup>[$1]</sup>");
+      let answer = "Sorry, I couldn’t find that.";
+      let citations: Citation[] | undefined = undefined;
 
-      setMessages((m) => [...m, { role: "assistant", content: rendered }]);
-    } catch (e) {
+      // If backend returns a non-2xx, try to parse the error but still show a friendly message
+      const json = await res.json().catch(() => ({}));
+      if (json?.answer) answer = json.answer;
+      if (Array.isArray(json?.citations)) citations = json.citations;
+
+      const rendered = renderAnswerHtml(answer);
+
       setMessages((m) => [
         ...m,
-        { role: "assistant", content: "Oops, something went wrong." },
+        { role: "assistant", content: rendered, citations },
+      ]);
+    } catch (_e) {
+      setMessages((m) => [
+        ...m,
+        {
+          role: "assistant",
+          content: escapeHtml(
+            "Oops, something went wrong. If this keeps happening, it might be a backend error rather than 'no answer found.'"
+          ),
+        },
       ]);
     } finally {
       setLoading(false);
@@ -73,7 +118,7 @@ export default function SupportBotWidget({
           color: "white",
           border: "none",
           cursor: "pointer",
-          boxShadow: "0 10px 20px rgba(0,0,0,.35)"
+          boxShadow: "0 10px 20px rgba(0,0,0,.35)",
         }}
       >
         💬 Support
@@ -95,16 +140,29 @@ export default function SupportBotWidget({
             boxShadow: "0 20px 40px rgba(0,0,0,.5)",
             border: "1px solid #27272a",
             overflow: "hidden",
-            zIndex: 50
+            zIndex: 50,
           }}
         >
-          <div style={{ padding: "12px 16px", background: "#27272a", borderBottom: "1px solid #3f3f46", fontWeight: 600 }}>
+          <div
+            style={{
+              padding: "12px 16px",
+              background: "#27272a",
+              borderBottom: "1px solid #3f3f46",
+              fontWeight: 600,
+            }}
+          >
             {title}
           </div>
 
           <div style={{ height: 384, overflowY: "auto", padding: 16 }}>
             {messages.map((m, i) => (
-              <div key={i} style={{ textAlign: m.role === "user" ? "right" : "left", marginBottom: 8 }}>
+              <div
+                key={i}
+                style={{
+                  textAlign: m.role === "user" ? "right" : "left",
+                  marginBottom: 10,
+                }}
+              >
                 <div
                   style={{
                     display: "inline-block",
@@ -112,16 +170,93 @@ export default function SupportBotWidget({
                     borderRadius: 12,
                     background: m.role === "user" ? "#4f46e5" : "#0f0f11",
                     border: m.role === "user" ? "none" : "1px solid #27272a",
-                    maxWidth: "90%"
+                    maxWidth: "90%",
                   }}
-                  dangerouslySetInnerHTML={{ __html: m.content.replace(/\n/g, "<br/>") }}
-                />
+                >
+                  <div
+                    dangerouslySetInnerHTML={{ __html: m.content }}
+                    style={{ fontSize: 14, lineHeight: "1.35" }}
+                  />
+                  {/* Citations block for assistant messages */}
+                  {m.role === "assistant" && m.citations && m.citations.length > 0 && (
+                    <div
+                      style={{
+                        marginTop: 8,
+                        paddingTop: 8,
+                        borderTop: "1px dashed #3f3f46",
+                      }}
+                    >
+                      <div
+                        style={{
+                          fontSize: 11,
+                          letterSpacing: 0.3,
+                          textTransform: "uppercase",
+                          color: "#9ca3af",
+                          marginBottom: 4,
+                          fontWeight: 600,
+                        }}
+                      >
+                        Sources
+                      </div>
+                      <ol style={{ paddingLeft: 18, margin: 0 }}>
+                        {m.citations.map((c) => (
+                          <li key={c.index} style={{ marginBottom: 6 }}>
+                            <a
+                              href={c.url || "#"}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              style={{
+                                color: "#93c5fd",
+                                textDecoration: "underline",
+                                textUnderlineOffset: 2,
+                                fontWeight: 600,
+                                fontSize: 13,
+                              }}
+                              title={c.title}
+                            >
+                              {c.title || `Source ${c.index}`}
+                            </a>
+                            {c.updated_at && (
+                              <span
+                                style={{
+                                  marginLeft: 6,
+                                  fontSize: 11,
+                                  color: "#a3a3a3",
+                                }}
+                              >
+                                (updated {new Date(c.updated_at).toLocaleDateString()})
+                              </span>
+                            )}
+                            <div
+                              style={{
+                                fontSize: 12,
+                                color: "#cbd5e1",
+                                marginTop: 2,
+                              }}
+                            >
+                              {c.snippet}
+                            </div>
+                          </li>
+                        ))}
+                      </ol>
+                    </div>
+                  )}
+                </div>
               </div>
             ))}
-            {loading && <div style={{ opacity: 0.7, fontSize: 14 }}>Thinking…</div>}
+            {loading && (
+              <div style={{ opacity: 0.7, fontSize: 14 }}>Thinking…</div>
+            )}
           </div>
 
-          <div style={{ padding: 12, borderTop: "1px solid #27272a", display: "flex", gap: 8 }}>
+          <div
+            style={{
+              padding: 12,
+              borderTop: "1px solid #27272a",
+              display: "flex",
+              gap: 8,
+            }}
+          >
             <input
               value={input}
               onChange={(e) => setInput(e.target.value)}
@@ -134,7 +269,7 @@ export default function SupportBotWidget({
                 border: "1px solid #27272a",
                 color: "#e5e5e5",
                 padding: "8px 10px",
-                outline: "none"
+                outline: "none",
               }}
             />
             <button
@@ -147,7 +282,7 @@ export default function SupportBotWidget({
                 border: "none",
                 padding: "8px 14px",
                 opacity: loading ? 0.6 : 1,
-                cursor: loading ? "default" : "pointer"
+                cursor: loading ? "default" : "pointer",
               }}
             >
               Send

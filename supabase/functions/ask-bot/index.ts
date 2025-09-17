@@ -34,6 +34,30 @@ function normalizeLocal(s: string) {
     .trim();
 }
 
+type KBRow = {
+  id?: string;
+  content: string;
+  score?: number;
+  source_url?: string | null;
+  source_title?: string | null;
+  updated_at?: string | null;
+};
+
+type Citation = {
+  index: number;          // 1-based, matches [#n] in the answer
+  title: string;
+  url: string;
+  snippet: string;
+  score: number;
+  updated_at?: string | null;
+};
+
+function safeUrl(r: KBRow): string {
+  // If your RPC returns a doc/article id and you need to synthesize a URL, do it here.
+  // Example (Freshdesk): return r.source_url ?? `https://your.freshdesk.com/support/solutions/articles/${r.id}`;
+  return r.source_url ?? "#";
+}
+
 serve(async (req) => {
   const origin = req.headers.get("origin");
   const baseHeaders = corsHeaders(origin);
@@ -138,9 +162,14 @@ serve(async (req) => {
       );
     }
 
-    const context = (rows ?? [])
+    const hits: KBRow[] = Array.isArray(rows) ? rows : [];
+
+    // Use the top K rows for LLM context in this exact order so [#n] is stable.
+    const topForLLM = hits.slice(0, Math.min(hits.length, topK));
+
+    const context = topForLLM
       .map(
-        (r: any, i: number) =>
+        (r: KBRow, i: number) =>
           `[#${i + 1} | score=${Number(r.score ?? 0).toFixed(3)}]\n${r.content}`,
       )
       .join("\n\n");
@@ -169,9 +198,20 @@ serve(async (req) => {
 
     const answer: string =
       chatRes?.choices?.[0]?.message?.content ??
-      (rows?.length ? "I don't know." : "I couldn’t find that in our knowledge base.");
+      (hits.length ? "I don't know." : "I couldn’t find that in our knowledge base.");
 
-    return new Response(JSON.stringify({ answer, sources: rows ?? [] }), {
+    // 4) Build citations that match [#1..#n]
+    const citations: Citation[] = topForLLM.map((r, i) => ({
+      index: i + 1,
+      title: r.source_title || "Knowledge Base Article",
+      url: safeUrl(r),
+      snippet: (r.content || "").slice(0, 240) + ((r.content?.length ?? 0) > 240 ? "…" : ""),
+      score: Number(r.score ?? 0),
+      updated_at: r.updated_at ?? undefined,
+    }));
+
+    // Keep "sources" for backward-compat with your current frontend, but add "citations" for the new UI.
+    return new Response(JSON.stringify({ answer, citations, sources: hits }), {
       status: 200,
       headers: baseHeaders,
     });
